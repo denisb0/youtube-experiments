@@ -7,14 +7,16 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
 
+	"github.com/joho/godotenv"
 	"google.golang.org/api/option"
 	"google.golang.org/api/youtube/v3"
 )
 
 var (
 	query      = flag.String("query", "Google", "Search term")
-	videoID    = flag.String("video", "", "Video id")
+	id         = flag.String("id", "", "Video/channel/playlist id")
 	maxResults = flag.Int64("max-results", 5, "Max YouTube results")
 )
 
@@ -27,7 +29,7 @@ func handleError(err error, message string) {
 	}
 }
 
-const developerKey = "DEVELOPER_KEY"
+const apiKeyEnv = "API_KEY"
 
 // Print the ID and title of each result in a list as well as a name that
 // identifies the list. For example, print the word section name "Videos"
@@ -99,16 +101,144 @@ func videoDetails(s *youtube.Service, id string, parts []string) error {
 	return nil
 }
 
+func playlistItems(s *youtube.Service, id string, parts []string, pageToken string) error {
+	fmt.Printf("get video %s, parts %v\n", id, parts)
+	call := s.PlaylistItems.List(parts).PlaylistId(id).MaxResults(3).Fields("items/snippet/title", "items/snippet/resourceId/videoId")
+	if pageToken != "" {
+		call = call.PageToken(pageToken)
+	}
+	response, err := call.Do()
+	if err != nil {
+		return err
+	}
+	if len(response.Items) == 0 {
+		fmt.Printf("%+v\n", response)
+		return errors.New("no content found")
+	}
+
+	j, err := json.MarshalIndent(response, "", "   ")
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(string(j))
+
+	return nil
+}
+
+func playlists(s *youtube.Service, id string, parts []string) error {
+	fmt.Printf("get playlist %s, parts %v\n", id, parts)
+	call := s.Playlists.List(parts).ChannelId(id).MaxResults(50).Fields("items/snippet/title", "items/id")
+
+	response, err := call.Do()
+	if err != nil {
+		return err
+	}
+	if len(response.Items) == 0 {
+		fmt.Printf("%+v\n", response)
+		return errors.New("no content found")
+	}
+
+	j, err := json.MarshalIndent(response, "", "   ")
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(string(j))
+
+	return nil
+}
+
+func channels(s *youtube.Service, id string, parts []string) error {
+	fmt.Printf("get channels %s, parts %v\n", id, parts)
+	call := s.Channels.List(parts).Id(id)
+
+	response, err := call.Do()
+	if err != nil {
+		return err
+	}
+	if len(response.Items) == 0 {
+		fmt.Printf("%+v\n", response)
+		return errors.New("no content found")
+	}
+
+	j, err := json.MarshalIndent(response, "", "   ")
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(string(j))
+
+	return nil
+}
+
+func getChannelID(s *youtube.Service, channelName string) (string, error) {
+	fmt.Printf("get channels %s\n", channelName)
+
+	call := s.Search.List([]string{"id"}).
+		Q(channelName).
+		MaxResults(1).Type("channel")
+	response, err := call.Do()
+	if err != nil {
+		return "", err
+	}
+
+	if len(response.Items) == 0 {
+		return "", errors.New("no result found")
+	}
+	item := response.Items[0]
+	if item.Id.Kind != "youtube#channel" {
+		return "", errors.New("result not channel type")
+	}
+
+	j, err := json.MarshalIndent(response, "", "   ")
+	if err != nil {
+		return "", err
+	}
+	fmt.Println(string(j))
+
+	return item.Id.ChannelId, nil
+}
+
+func getUploadsPlaylistID(s *youtube.Service, channelID string) (string, error) {
+	call := s.Channels.List([]string{"contentDetails"}).MaxResults(1).Id(channelID).Fields("items/contentDetails/relatedPlaylists/uploads")
+
+	response, err := call.Do()
+	if err != nil {
+		return "", err
+	}
+	return response.Items[0].ContentDetails.RelatedPlaylists.Uploads, nil
+}
+
 func main() {
 	flag.Parse()
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
+	apiKey := os.Getenv(apiKeyEnv)
 
 	ctx := context.Background()
-	service, err := youtube.NewService(ctx, option.WithAPIKey(developerKey))
-	// service, err := youtube.New(client)
+	service, err := youtube.NewService(ctx, option.WithAPIKey(apiKey))
 	if err != nil {
 		log.Fatalf("Error creating new YouTube client: %v", err)
 	}
 
-	handleError(videoDetails(service, *videoID, []string{"snippet", "player", "topicDetails", "recordingDetails"}), "show video details")
+	// handleError(videoDetails(service, *videoID, []string{"snippet", "player", "topicDetails", "recordingDetails"}), "show video details")
+	// handleError(playlistItems(service, *id, []string{"snippet"}, ""), "show playlist")
+	// handleError(playlists(service, *id, []string{"snippet"}), "show playlists")
+	// handleError(channels(service, *id, []string{"contentDetails"}), "show playlists")
 
+	// uploads, err := getUploadsPlaylistID(service, *id)
+	// handleError(err, "getUploadsPlaylistID")
+	// fmt.Println(uploads)
+	// handleError(playlistItems(service, uploads, []string{"snippet"}, ""), "show playlist")
+
+	chID, err := getChannelID(service, *id)
+	handleError(err, "getChannelID")
+	fmt.Println(chID)
 }
+
+// my channel UC64mIIOlYMWB5ac6VoaRj8w
+// dailydev UCXUjtTfQWJa0G9K_SqRm3jQ
+// https://www.youtube.com/@dailydotdev/shorts
